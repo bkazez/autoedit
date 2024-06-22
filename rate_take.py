@@ -53,14 +53,8 @@ def play_audio(audio_file, playback_done, stop_flag):
     wf.close()
 
 def record_ratings(file_path, output_file, start_measure):
-    # List to store ratings and sample numbers
-    record_ins = array.array('L')  # Unsigned long
-    record_outs = array.array('L')  # Unsigned long
-    ratings = array.array('B')  # Unsigned char
-    measure_numbers = array.array('L')
-
-    record_ins = [0]
-    measure_numbers = [start_measure]
+    # List to store raw ratings and sample numbers
+    ratings_samples = []
 
     playback_done = threading.Event()
     stop_flag = threading.Event()
@@ -72,38 +66,29 @@ def record_ratings(file_path, output_file, start_measure):
     playback_thread = threading.Thread(target=play_audio, args=(file_path, playback_done, stop_flag))
 
     def on_key_event(sample_rate, start_time):
-        nonlocal record_ins, record_outs, ratings, measure_numbers
         def inner(key):
             try:
                 key_name = key.char
             except AttributeError:
                 key_name = str(key)
 
-            current_time = time.time() - start_time
+            current_time = time.perf_counter() - start_time
             current_sample = int(current_time * sample_rate)
 
-            # Check for character "c"
             if key_name == "c":
                 stop_flag.set()
                 playback_done.set()
                 print("Stopping playback and exiting...")
-                record_outs.append(current_sample)
+                return
 
             if key_name and key_name.isdigit():
-                record_outs.append(current_sample)
-                record_ins.append(current_sample) # starts with zero in it, so these will be properly offset from record_outs
-
                 rating = int(key_name)
-                ratings.append(rating)
-
-                #print(f"\bRecorded rating: {rating} at sample {current_sample}, measure {measure_numbers[-1]}")
-
-                measure_numbers.append(measure_numbers[-1] + 1)
+                ratings_samples.append((current_sample, rating))
 
         return inner
 
     # Register the key press event handler
-    start_time = time.time()
+    start_time = time.perf_counter()
     listener = keyboard.Listener(on_press=on_key_event(sample_rate, start_time))
     listener.start()
 
@@ -121,6 +106,33 @@ def record_ratings(file_path, output_file, start_measure):
         playback_thread.join()
         print("Playback finished or interrupted")
 
+        # Process recorded ratings and sample numbers
+        processed_ratings_samples = []
+        last_sample = None
+
+        for sample, rating in ratings_samples:
+            if last_sample is None:
+                last_sample = (sample, rating)
+                continue
+
+            # Ensure samples are not too close together
+            if sample - last_sample[0] < sample_rate:
+                # If they are less than 1 second apart, keep the first sample's timestamp but use the second's rating
+                last_sample = (last_sample[0], rating)
+            else:
+                processed_ratings_samples.append(last_sample)
+                last_sample = (sample, rating)
+
+        if last_sample is not None:
+            processed_ratings_samples.append(last_sample)
+
+        # Convert processed ratings and samples to record_in and record_out
+        record_ins = array.array('L', (0,) + tuple(s for s, _ in processed_ratings_samples))
+        record_outs = array.array('L', (record_ins[i] for i in range(1, len(record_ins))))
+        record_outs.append(record_ins[-1])
+        ratings = array.array('B', (r for _, r in processed_ratings_samples))
+        measure_numbers = array.array('L', (start_measure + i for i in range(len(record_ins))))
+
         # Save ratings to a CSV file
         with open(output_file, 'w') as f:
             f.write("Sample Rate,Measure Number,Record In,Record Out,Rating\n")
@@ -131,7 +143,7 @@ def record_ratings(file_path, output_file, start_measure):
 def main():
     parser = argparse.ArgumentParser(description='Record ratings for audio or video file.')
     parser.add_argument('input_file', type=str, nargs='?', help='Path to the input file')
-    parser.add_argument('--start_measure', type=str, default=1, help='Number of the first measure')
+    parser.add_argument('--start_measure', type=int, default=1, help='Number of the first measure')
     args = parser.parse_args()
 
     if not args.input_file:
@@ -139,7 +151,7 @@ def main():
         sys.exit(1)
 
     input_file = args.input_file
-    output_file = input_file.rsplit('.', 1)[0] + '.csv'
+    output_file = os.path.splitext(input_file)[0] + '.csv'
 
     record_ratings(input_file, output_file, args.start_measure)
 
