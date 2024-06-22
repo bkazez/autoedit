@@ -7,6 +7,9 @@ def read_csv_files(filepaths):
     dfs = [pd.read_csv(filepath) for filepath in filepaths]
     return dfs
 
+def wav_for_csv(filepath):
+    return filepath.replace('.csv', '.wav')
+
 def calculate_optimal_path(dfs, edit_penalty):
     all_measures = sorted(set().union(*(df['Measure Number'].unique() for df in dfs)))
     num_measures = len(all_measures)
@@ -64,8 +67,7 @@ Source Table Entries: {num_sources}
     source_ids = {}
     for i, filepath in enumerate(filepaths):
         source_ids[filepath] = i + 1
-        wav_filepath = filepath.replace('.csv', '.wav')
-        source_entries += f"   {i+1} \"{wav_filepath}\"\n"
+        source_entries += f"   {i+1} \"{wav_for_csv(filepath)}\"\n"
 
     track_header = """Track 1: "Main" Solo: 0 Mute: 0
 #Source      Track       Play-In     Play-Out    Record-In   Record-Out  Vol(dB)  MT LK FadeIn  %     CurveType    FadeOut  %     CurveType    Name
@@ -91,7 +93,7 @@ Source Table Entries: {num_sources}
         play_in = current_sample
         play_out = play_in + duration
 
-        wav_filename = os.path.basename(filepaths[take]).replace('.csv', '.wav')
+        wav_filename = os.path.basename(wav_for_csv(filepaths[take]))
         source_id = source_ids[filepaths[take]]
         track_entries += "{:>11d} {:>11d} {:>11d} {:>11d} {:>11d} {:>11d} {:>8} {:>2} {:>2} {:>7} {:>5} {:>12} {:>8} {:>5} {:>12} {}\n".format(
             source_id, 1, play_in, play_out, record_in, record_out, "0.00", 0, 0, 0, 0, "\"*default\"", 0, 0, "\"*default\"", f"\"{wav_filename}\""
@@ -118,6 +120,26 @@ def main(filepaths, outfile, edit_penalty):
     edl_content = generate_samplitude_edl(optimal_path, filepaths, dfs)
     with open(outfile, "w") as edl_file:
         edl_file.write(edl_content)
+
+    # Find the complete take with the average highest score
+    highest_measure = max(max(df['Measure Number']) for df in dfs)
+    cutoff_measure = highest_measure * 0.95
+
+    best_take = None
+    best_average_score = -np.inf
+
+    for i, df in enumerate(dfs):
+        measures = df['Measure Number'].values
+        if measures[0] == 1 and measures[-1] >= cutoff_measure:
+            average_score = df['Rating'].mean()
+            if average_score > best_average_score:
+                best_take = i
+                best_average_score = average_score
+
+    if best_take is not None:
+        print(f"Best complete take: {wav_for_csv(take_names[best_take])}")
+    else:
+        print(f"No \"best\" complete take found.")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Find the optimal edit decision list from CSV files.')

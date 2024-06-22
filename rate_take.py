@@ -96,10 +96,9 @@ def record_ratings(file_path, output_file, start_measure):
                 rating = int(key_name)
                 ratings.append(rating)
 
-                print(f"\bRecorded rating: {rating} at sample {current_sample}, measure {measure_numbers[-1]}")
+                #print(f"\bRecorded rating: {rating} at sample {current_sample}, measure {measure_numbers[-1]}")
 
                 measure_numbers.append(measure_numbers[-1] + 1)
-
 
         return inner
 
